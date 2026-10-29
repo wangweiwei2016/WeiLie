@@ -21,9 +21,17 @@ namespace Hunt.UI
 
         private void Awake()
         {
-            _text = GetComponent<Text>();
-            _cg   = gameObject.AddComponent<CanvasGroup>();
-            _cg.alpha = 1f;
+            _text = gameObject.GetComponent<Text>();
+            _cg = gameObject.GetComponent<CanvasGroup>();
+            if (null == _cg)
+            {
+                _cg = gameObject.AddComponent<CanvasGroup>();
+            }
+
+            if (null != _cg)
+            {
+                _cg.alpha = 1f;
+            }
         }
 
         private void OnEnable()
@@ -68,8 +76,11 @@ namespace Hunt.UI
                                                 Vector2 pos, string text, Color color)
         {
             var go = Instantiate(prefab, parent);
+            go.SetActive(true); // prefab 通常是 inactive 的，克隆出来必须手动激活，否则动画协程不会启动
             var rt = go.GetComponent<RectTransform>();
             rt.anchoredPosition = pos;
+            rt.anchorMin = rt.anchorMax = new Vector2(0.5f, 0.5f);
+            rt.pivot = new Vector2(0.5f, 0.5f);
 
             var txt = go.GetComponent<Text>();
             if (txt == null) txt = go.AddComponent<Text>();

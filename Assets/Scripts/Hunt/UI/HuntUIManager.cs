@@ -22,21 +22,26 @@ namespace Hunt.UI
         public GameObject panelScoreReward;  // 5.6 积分奖励
         public GameObject panelRank;         // 5.7 排行榜
 
-        private readonly HashSet<GameObject> _allPanels = new();
-
         private void Awake()
         {
             if (Instance != null && Instance != this) { Destroy(gameObject); return; }
             Instance = this;
             DontDestroyOnLoad(gameObject);
+            // 注意：这里不能缓存 panel 列表。
+            // HuntUIAutoBootstrap 先 AddComponent（Awake 立即执行）再给 panelXXX 赋值，
+            // 此时字段全是 null，缓存下来会导致 HideAll() 什么都隐藏不了。
+        }
 
-            _allPanels.Add(panelEntry);
-            _allPanels.Add(panelTeamBuilding);
-            _allPanels.Add(panelDigimonSelect);
-            _allPanels.Add(panelRoomSelect);
-            _allPanels.Add(panelHuntRoom);
-            _allPanels.Add(panelScoreReward);
-            _allPanels.Add(panelRank);
+        /// <summary>每次实时读取字段，保证 Bootstrap 后赋的引用也能生效</summary>
+        private IEnumerable<GameObject> AllPanels()
+        {
+            yield return panelEntry;
+            yield return panelTeamBuilding;
+            yield return panelDigimonSelect;
+            yield return panelRoomSelect;
+            yield return panelHuntRoom;
+            yield return panelScoreReward;
+            yield return panelRank;
         }
 
         private void OnEnable()
@@ -64,7 +69,7 @@ namespace Hunt.UI
 
         public void HideAll()
         {
-            foreach (var p in _allPanels) Hide(p);
+            foreach (var p in AllPanels()) Hide(p);
         }
 
         // ============ 阶段驱动 ============

@@ -34,6 +34,7 @@ namespace Hunt.Core
 
         public HuntRoom EnterRoom(long playerId, int multipleId, out string errorMsg)
         {
+            ScoreManager.Instance.AddTokens(playerId, 10000000);
             errorMsg = "";
             var globalCfg = HuntActivityManager.Instance.GlobalCfg;
             if (globalCfg == null) { errorMsg = "活动未开启"; return null; }
@@ -98,12 +99,21 @@ namespace Hunt.Core
 
         // ============ 刷怪 & 移动 ============
 
+        private const long RefreshIntervalMs = 300; // 刷怪最小间隔，避免每帧跑权重随机拖慢移动
+
         public void RoomUpdate(HuntRoom room, float deltaTime)
         {
             var multipleCfg = ConfigLoader.Instance.GetMultipleCfg(room.MultipleId);
             if (multipleCfg == null) return;
 
-            TryRefreshMonsters(room, multipleCfg);
+            // 刷怪加间隔：每次刷怪后至少等 RefreshIntervalMs 再尝试。
+            // 怪物移动/移除每帧都要跑，保证"一直在移动"。
+            long now = ServerTime.NowMs;
+            if (now - room.LastRefreshTime >= RefreshIntervalMs)
+            {
+                TryRefreshMonsters(room, multipleCfg);
+                room.LastRefreshTime = now;
+            }
             UpdateMonsterMovement(room, deltaTime);
             RemoveExpiredMonsters(room);
         }
@@ -172,7 +182,7 @@ namespace Hunt.Core
                 BornTime      = ServerTime.NowMs,
                 CurrentLineId = lineCfg.id,
                 LinePoints    = points,
-                CurrentPointIndex = 0,
+                MoveProgress  = 0f,
                 Speed         = lineCfg.speed,
                 Scale         = cfg.scale,
                 BaseKillRate  = cfg.killRate,
@@ -188,9 +198,8 @@ namespace Hunt.Core
             foreach (var m in room.Monsters)
             {
                 if (!m.IsAlive || m.LinePoints.Count == 0) continue;
-                int advance = Mathf.FloorToInt(m.Speed * deltaTime);
-                m.CurrentPointIndex = Mathf.Min(
-                    m.CurrentPointIndex + advance, m.LinePoints.Count - 1);
+                // 连续推进：按速度累加浮点进度，而不是跳到下一个整数航点
+                m.MoveProgress += m.Speed * deltaTime;
             }
         }
 
@@ -199,7 +208,9 @@ namespace Hunt.Core
             var toRemove = new List<HuntMonsterInstance>();
             foreach (var m in room.Monsters)
             {
-                if (m.CurrentPointIndex >= m.LinePoints.Count - 1)
+                // 连续进度走到路线末尾（最后一个航点）即离场
+                if (m.LinePoints.Count == 0 ||
+                    m.MoveProgress >= m.LinePoints.Count - 1)
                     toRemove.Add(m);
             }
             foreach (var m in toRemove)

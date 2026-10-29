@@ -618,7 +618,31 @@ namespace Hunt.UI
         {
             panel.GetComponent<Image>().color = new Color(0.05f, 0.12f, 0.08f, 1f);
 
-            var ui = panel.AddComponent<HuntRoomUI>();
+            // 中央猎场区：先创建并保持 inactive。
+            // 原因：AddComponent 会同步触发 Awake/OnEnable，此时所有 Inspector 字段还是 null，
+            // OnEnable 里的 RefreshXXX 全部白跑。设为 inactive 可以推迟到 SetActive(true) 时再初始化。
+            var huntArea = new GameObject("HuntArea", typeof(RectTransform), typeof(Image));
+            huntArea.transform.SetParent(panel.transform, false);
+            var haRT = huntArea.GetComponent<RectTransform>();
+            haRT.anchorMin = new Vector2(0, 0.15f); haRT.anchorMax = new Vector2(1, 0.85f);
+            haRT.offsetMin = haRT.offsetMax = Vector2.zero;
+            var haImg = huntArea.GetComponent<Image>();
+            haImg.color = new Color(0.2f, 0.35f, 0.2f, 1f);
+            haImg.raycastTarget = true; // 猎场区必须接收点击/长按（HuntRoomUI 实现了 IPointerDownHandler）
+
+            huntArea.SetActive(false);
+            var ui = huntArea.AddComponent<HuntRoomUI>();
+            ui.huntArea = haRT;
+
+            // 怪物容器：铺满猎场区并居中，作为怪物坐标的基准。
+            // 原来 anchorMin=anchorMax=0 且尺寸为 0，会导致 ±w/2 的坐标映射整体偏移半个屏幕。
+            var monsterContainer = new GameObject("MonsterContainer", typeof(RectTransform));
+            monsterContainer.transform.SetParent(huntArea.transform, false);
+            var mcRT = monsterContainer.GetComponent<RectTransform>();
+            mcRT.anchorMin = Vector2.zero; mcRT.anchorMax = Vector2.one;
+            mcRT.offsetMin = Vector2.zero; mcRT.offsetMax = Vector2.zero;
+            mcRT.pivot = new Vector2(0.5f, 0.5f);
+            ui.monsterContainer = monsterContainer.transform;
 
             // 顶部信息栏
             var topBar = new GameObject("TopBar", typeof(RectTransform));
@@ -645,60 +669,44 @@ namespace Hunt.UI
             tsRT.anchorMin = new Vector2(0.66f, 0); tsRT.anchorMax = new Vector2(1, 1);
             tsRT.offsetMin = Vector2.zero; tsRT.offsetMax = Vector2.zero;
 
-            // 中央猎场区（玩家点击/长按区）
-            var huntArea = new GameObject("HuntArea", typeof(RectTransform), typeof(Image));
-            huntArea.transform.SetParent(panel.transform, false);
-            var haRT = huntArea.GetComponent<RectTransform>();
-            haRT.anchorMin = new Vector2(0, 0.15f); haRT.anchorMax = new Vector2(1, 0.85f);
-            haRT.offsetMin = haRT.offsetMax = Vector2.zero;
-            var haImg = huntArea.GetComponent<Image>();
-            haImg.color = new Color(0.2f, 0.35f, 0.2f, 1f);
-            // HuntRoomUI 本身需要实现 IPointerDownHandler 等接口 —— 让它挂到 huntArea 上
-            Object.Destroy(ui);  // 先卸掉旧的
-            ui = huntArea.AddComponent<HuntRoomUI>();
-
-            // 重新挂 HuntRoomUI 到 panel 的引用会失效 —— 让 HuntUIAutoBootstrap 返回 huntArea 所在的 HuntRoomUI
-            // 实际用：panelHuntRoom 是外层 Canvas 下的容器，HuntRoomUI 挂在 huntArea 上
-            // HuntUIManager.panelHuntRoom 只需 SetActive 整个 panelHuntRoom 即可
-
-            ui.huntArea = haRT;
-            var monsterContainer = new GameObject("MonsterContainer", typeof(RectTransform));
-            monsterContainer.transform.SetParent(huntArea.transform, false);
-            var mcRT = monsterContainer.GetComponent<RectTransform>();
-            mcRT.anchorMin = mcRT.anchorMax = Vector2.zero;
-            ui.monsterContainer = monsterContainer.transform;
-
             // 玩家槽位区（底部）
             var psArea = new GameObject("PlayerSlots", typeof(RectTransform), typeof(HorizontalLayoutGroup));
             psArea.transform.SetParent(panel.transform, false);
             var psRT = psArea.GetComponent<RectTransform>();
             psRT.anchorMin = new Vector2(0, 0); psRT.anchorMax = new Vector2(1, 0.15f);
             psRT.offsetMin = psRT.offsetMax = Vector2.zero;
-            psArea.GetComponent<HorizontalLayoutGroup>().spacing = 30;
+            var hlg = psArea.GetComponent<HorizontalLayoutGroup>();
+            hlg.spacing = 30;
+            hlg.childAlignment = TextAnchor.MiddleCenter;
+            hlg.childControlWidth = true;
+            hlg.childControlHeight = true;
+            hlg.childForceExpandWidth = true;
+            hlg.childForceExpandHeight = true;
+            hlg.padding = new RectOffset(40, 40, 20, 20);
             ui.playerSlotRoot = psArea.transform;
 
-            // 道具按钮（左下）
-            ui.fireItemBtn = CreateButton(panel.transform, "🔥 狂暴", 18);
+            // 道具按钮（顶部左侧，避开底部玩家槽位区，避免互相遮挡）
+            ui.fireItemBtn = CreateButton(panel.transform, "狂暴", 18);
             var fbRT = (RectTransform)ui.fireItemBtn.transform;
-            fbRT.anchorMin = fbRT.anchorMax = new Vector2(0.15f, 0.1f);
+            fbRT.anchorMin = fbRT.anchorMax = new Vector2(0.1f, 0.93f);
             fbRT.pivot = new Vector2(0.5f, 0.5f);
             fbRT.sizeDelta = new Vector2(120, 60);
             fbRT.anchoredPosition = Vector2.zero;
-            ui.fireItemCountText = CreateText(panel.transform, "x1", 16, TextAnchor.MiddleCenter, Color.white);
+            ui.fireItemCountText = CreateText(panel.transform, "x0", 16, TextAnchor.MiddleCenter, Color.white);
             var fctRT = ui.fireItemCountText.rectTransform;
-            fctRT.anchorMin = fctRT.anchorMax = new Vector2(0.15f, 0.05f);
+            fctRT.anchorMin = fctRT.anchorMax = new Vector2(0.1f, 0.88f);
             fctRT.pivot = new Vector2(0.5f, 0.5f);
             fctRT.sizeDelta = new Vector2(60, 30);
 
-            ui.lockItemBtn = CreateButton(panel.transform, "🎯 锁定", 18);
+            ui.lockItemBtn = CreateButton(panel.transform, "锁定", 18);
             var lbRT = (RectTransform)ui.lockItemBtn.transform;
-            lbRT.anchorMin = lbRT.anchorMax = new Vector2(0.35f, 0.1f);
+            lbRT.anchorMin = lbRT.anchorMax = new Vector2(0.25f, 0.93f);
             lbRT.pivot = new Vector2(0.5f, 0.5f);
             lbRT.sizeDelta = new Vector2(120, 60);
             lbRT.anchoredPosition = Vector2.zero;
-            ui.lockItemCountText = CreateText(panel.transform, "x1", 16, TextAnchor.MiddleCenter, Color.white);
+            ui.lockItemCountText = CreateText(panel.transform, "x0", 16, TextAnchor.MiddleCenter, Color.white);
             var lctRT = ui.lockItemCountText.rectTransform;
-            lctRT.anchorMin = lctRT.anchorMax = new Vector2(0.35f, 0.05f);
+            lctRT.anchorMin = lctRT.anchorMax = new Vector2(0.25f, 0.88f);
             lctRT.pivot = new Vector2(0.5f, 0.5f);
             lctRT.sizeDelta = new Vector2(60, 30);
 
@@ -720,21 +728,33 @@ namespace Hunt.UI
             exRT.sizeDelta = new Vector2(160, 50);
             exRT.anchoredPosition = new Vector2(-20, 0);
 
-            // 子弹 Prefab
+            // 子弹 Prefab（保持 inactive，实例化后由 HuntRoomUI 手动 SetActive(true)）
             var bullet = new GameObject("BulletPrefab", typeof(RectTransform), typeof(Image));
+            bullet.transform.SetParent(panel.transform, false);
             var bRT = bullet.GetComponent<RectTransform>();
             bRT.sizeDelta = new Vector2(20, 20);
-            bullet.GetComponent<Image>().color = new Color(1, 0.9f, 0.3f, 1f);
+            var bImg = bullet.GetComponent<Image>();
+            bImg.color = new Color(1, 0.9f, 0.3f, 1f);
+            bImg.raycastTarget = false;
             bullet.SetActive(false);
             ui.bulletPrefab = bullet;
 
-            // 飘字 Prefab
-            var popup = new GameObject("ScorePopupPrefab", typeof(RectTransform));
+            // 飘字 Prefab —— 必须自带 Text，否则 HuntRoomUI 里 GetComponent<Text>() 拿到 null，飘字永远不显示
+            var popup = new GameObject("ScorePopupPrefab", typeof(RectTransform), typeof(Text), typeof(ScorePopupAnimator));
+            popup.transform.SetParent(panel.transform, false);
+            var pRT = popup.GetComponent<RectTransform>();
+            pRT.sizeDelta = new Vector2(160, 60);
+            var pTxt = popup.GetComponent<Text>();
+            pTxt.font = Font;
+            pTxt.fontSize = 28;
+            pTxt.alignment = TextAnchor.MiddleCenter;
+            pTxt.color = Color.yellow;
+            pTxt.raycastTarget = false;
             popup.SetActive(false);
             ui.scorePopupPrefab = popup;
 
-            // Canvas (popupCanvas 直接用 huntArea 的 Canvas)
-            ui.popupCanvas = huntArea.GetComponentInParent<Canvas>();
+            // Canvas（panel 可能在 inactive 状态下构建，includeInactive 才能找到父级 Canvas）
+            ui.popupCanvas = huntArea.GetComponentInParent<Canvas>(true);
 
             // 手指引导
             var guide = new GameObject("FingerGuide", typeof(RectTransform));
@@ -750,10 +770,10 @@ namespace Hunt.UI
             gdTxt.rectTransform.offsetMin = Vector2.zero; gdTxt.rectTransform.offsetMax = Vector2.zero;
             ui.fingerGuide = guide;
 
-            // 把 ui 重新设置回 panel（因为 HuntRoomUI 现在挂在 huntArea 上）
-            // 实际上 HuntUIManager.panelHuntRoom 只要 SetActive 外层 panel 即可，
-            // HuntRoomUI 的所有引用都是内部组件，它自己在 OnEnable 找 HuntRoom
+            // 所有字段赋值完成 → 绑定按钮事件 → 激活猎场区，
+            // 此时 HuntRoomUI 的 Awake/OnEnable 才会带着完整引用执行一次
             ui.BindUI();
+            huntArea.SetActive(true);
         }
 
         private static void BuildScoreRewardPanel(GameObject panel)

@@ -92,9 +92,12 @@ namespace Hunt.UI
             HuntRoomManager.Instance.OnKillResult     -= OnKillResult;
             AttackController.Instance.OnAttackTriggered -= OnAttackTriggered;
             ItemManager.Instance.OnItemChanged        -= OnItemChanged;
-
-            HuntRoomManager.Instance.ExitRoom(_myId);
+            // 注意：这里不能调 ExitRoom。
+            // 面板被 SetActive(false)（HideAll / 打开其它面板）也会触发 OnDisable，
+            // 若在此退房，玩家只是切了个界面就被踢出猎场。退房只在玩家点「退出猎场」时执行。
         }
+
+        private int _lastTokens = -1, _lastScore = -1, _lastTeamScore = -1;
 
         private void Update()
         {
@@ -107,22 +110,25 @@ namespace Hunt.UI
         private void RefreshPlayerSlots()
         {
             if (playerSlotRoot == null) return;
-            foreach (Transform c in playerSlotRoot) Destroy(c.gameObject);
+            for (int i = playerSlotRoot.childCount - 1; i >= 0; i--)
+                Destroy(playerSlotRoot.GetChild(i).gameObject);
 
             var room = HuntRoomManager.Instance.GetPlayerRoom(_myId);
             if (room == null) return;
 
             for (int i = 0; i < room.PlayerIds.Count; i++)
             {
-                var pid = room.PlayerIds[i];
-                var go = new GameObject($"Slot_{pid}");
+                long pid = room.PlayerIds[i];
+                var go = new GameObject($"Slot_{pid}", typeof(RectTransform), typeof(Text));
                 go.transform.SetParent(playerSlotRoot, false);
-                var t = go.AddComponent<Text>();
+                var t = go.GetComponent<Text>();
                 t.font = _fallbackFont;
-                string tag = pid == _myId ? "(我) " : "";
-                var p = PlayerDataManager.Instance.GetPlayer(pid);
-                //t.text = $"{tag}{p?.Nickname ?? pid}";
+                t.fontSize = 20;
                 t.alignment = TextAnchor.MiddleCenter;
+                t.color = pid == _myId ? Color.yellow : Color.white;
+                var p = PlayerDataManager.Instance.GetPlayer(pid);
+                string tag = pid == _myId ? "(我)" : "";
+                t.text = $"{tag}{p?.Nickname ?? $"玩家_{pid}"}";
             }
         }
 
@@ -131,9 +137,23 @@ namespace Hunt.UI
             var tokens = ScoreManager.Instance.GetCurrentTokens(_myId);
             var score  = ScoreManager.Instance.GetPersonalScore(_myId);
             var teamScore = ScoreManager.Instance.GetTeamScoreByPlayer(_myId);
-            if (tokenText != null)    tokenText.text    = $"代币: {tokens}";
-            if (scoreText != null)    scoreText.text    = $"积分: {score}";
-            if (teamScoreText != null) teamScoreText.text = $"团队: {teamScore}";
+
+            // 仅在数值变化时才生成字符串，避免每帧 GC 造成移动卡顿
+            if (tokens != _lastTokens)
+            {
+                _lastTokens = tokens;
+                if (tokenText != null) tokenText.text = $"代币: {tokens}";
+            }
+            if (score != _lastScore)
+            {
+                _lastScore = score;
+                if (scoreText != null) scoreText.text = $"积分: {score}";
+            }
+            if (teamScore != _lastTeamScore)
+            {
+                _lastTeamScore = teamScore;
+                if (teamScoreText != null) teamScoreText.text = $"团队: {teamScore}";
+            }
         }
 
         private void RefreshItemButtons()
@@ -156,23 +176,34 @@ namespace Hunt.UI
 
         private void OnMonsterBorn(int roomId)
         {
+            if (monsterContainer == null) return;
             var room = HuntRoomManager.Instance.GetRoom(roomId);
             if (room == null) return;
 
             foreach (var m in room.Monsters)
             {
-                if (!_monsterViews.ContainsKey(m.InstanceId))
-                {
-                    var go = new GameObject($"Monster_{m.InstanceId}");
-                    go.transform.SetParent(monsterContainer, false);
-                    var rt = go.AddComponent<RectTransform>();
-                    rt.sizeDelta = new Vector2(60, 60);
-                    var img = go.AddComponent<Image>();
-                    img.color = new Color(1f, 0.5f, 0.2f, 0.9f); // 橙色方块占位
-                    var monsterView = go.AddComponent<MonsterView>();
-                    monsterView.Bind(m, OnMonsterClicked);
-                    _monsterViews[m.InstanceId] = monsterView;
-                }
+                if (_monsterViews.ContainsKey(m.InstanceId)) continue;
+
+                var go = new GameObject($"Monster_{m.InstanceId}",
+                    typeof(RectTransform), typeof(Image), typeof(Button));
+                go.transform.SetParent(monsterContainer, false);
+
+                // 锚点必须居中，否则 anchoredPosition 是相对父物体左下角，
+                // 与 UpdateMonsterPositions 里 ±w/2 的居中坐标计算对不上
+                var rt = go.GetComponent<RectTransform>();
+                rt.anchorMin = rt.anchorMax = new Vector2(0.5f, 0.5f);
+                rt.pivot = new Vector2(0.5f, 0.5f);
+                rt.sizeDelta = new Vector2(60, 60);
+
+                var img = go.GetComponent<Image>();
+                img.color = new Color(1f, 0.5f, 0.2f, 0.9f); // 橙色方块占位
+                img.raycastTarget = true;
+
+                go.GetComponent<Button>().transition = Selectable.Transition.None;
+
+                var monsterView = go.AddComponent<MonsterView>();
+                monsterView.Bind(m, OnMonsterClicked);
+                _monsterViews[m.InstanceId] = monsterView;
             }
         }
 
@@ -200,11 +231,12 @@ namespace Hunt.UI
                 if (!_monsterViews.TryGetValue(m.InstanceId, out var v) || v == null) continue;
                 if (m.LinePoints == null || m.LinePoints.Count == 0) continue;
 
-                var p = m.LinePoints[Mathf.Min(m.CurrentPointIndex, m.LinePoints.Count - 1)];
-                // 假设 Grid 最大 480×300，映射到 UI 中心坐标
+                // 用连续插值后的坐标，怪物会一直在航点之间平滑移动
+                var p = m.GetInterpolatedPosition();
                 float nx = (float)p.x / 480f * w - w / 2f;
                 float ny = (float)p.y / 300f * h - h / 2f;
-                v.GetComponent<RectTransform>().anchoredPosition = new Vector2(nx, ny);
+                var rt = v.CachedRect ?? (v.CachedRect = v.GetComponent<RectTransform>());
+                rt.anchoredPosition = new Vector2(nx, ny);
             }
         }
 
@@ -233,12 +265,14 @@ namespace Hunt.UI
 
         private void OnAttackTriggered()
         {
-            // 子弹表现（简化：在猎场中心闪一下）
-            if (bulletPrefab != null && huntArea != null)
-            {
-                var bullet = Instantiate(bulletPrefab, huntArea);
-                Destroy(bullet, 0.2f);
-            }
+            // 子弹表现（简化：从猎场中心闪一下）
+            if (bulletPrefab == null || huntArea == null) return;
+            var bullet = Instantiate(bulletPrefab, huntArea);
+            // prefab 本身是 inactive 的，实例化出来的克隆也是 inactive，必须手动激活才看得见
+            bullet.SetActive(true);
+            var brt = bullet.GetComponent<RectTransform>();
+            if (brt != null) brt.anchoredPosition = Vector2.zero;
+            Destroy(bullet, 0.2f);
         }
 
         private void OnKillResult(KillResult result)
@@ -256,17 +290,17 @@ namespace Hunt.UI
         private void ShowScorePopup(int score, bool isMine)
         {
             if (scorePopupPrefab == null || popupCanvas == null) return;
-            var popup = Instantiate(scorePopupPrefab, popupCanvas.transform);
-            var txt = popup.GetComponent<Text>();
-            if (txt != null)
-            {
-                txt.font = _fallbackFont;
-                txt.text = $"+{score}";
-                txt.fontSize = 28;
-                txt.alignment = TextAnchor.MiddleCenter;
-                txt.color = isMine ? Color.yellow : Color.white;
-            }
-            Destroy(popup, 1.2f);
+
+            // 猎场中心附近随机偏移，避免多个飘字完全重叠
+            Vector2 pos = new Vector2(Random.Range(-140f, 140f), Random.Range(-60f, 60f));
+            var anim = ScorePopupAnimator.Spawn(
+                popupCanvas.transform,
+                scorePopupPrefab,
+                pos,
+                $"+{score}",
+                isMine ? Color.yellow : Color.white);
+
+            if (anim != null) anim.transform.SetAsLastSibling();
         }
 
         // ============ 道具 ============
@@ -287,7 +321,8 @@ namespace Hunt.UI
 
         private void OnExit()
         {
-            gameObject.SetActive(false);
+            // 只有明确点「退出猎场」才真正退房，避免切界面（HideAll）把玩家踢出猎场
+            HuntRoomManager.Instance.ExitRoom(_myId);
             HuntUIManager.Instance.OpenRoomSelect();
         }
     }
@@ -296,11 +331,13 @@ namespace Hunt.UI
     {
         public HuntMonsterInstance Monster;
         public Button clickBtn;
+        public RectTransform CachedRect;
         public System.Action<MonsterView, HuntMonsterInstance> OnClick;
 
         private void Awake()
         {
             if (clickBtn == null) clickBtn = GetComponent<Button>();
+            if (CachedRect == null) CachedRect = GetComponent<RectTransform>();
             if (clickBtn != null) clickBtn.onClick.AddListener(() => OnClick?.Invoke(this, Monster));
         }
 

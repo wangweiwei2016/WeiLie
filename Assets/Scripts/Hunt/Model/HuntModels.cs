@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using UnityEngine;
 
 namespace Hunt.Model
 {
@@ -37,10 +38,36 @@ namespace Hunt.Model
         public long BornTime;           // 生成时间
         public int CurrentLineId;       // 当前路线ID
         public List<Vector2Int> LinePoints = new List<Vector2Int>(); // 路线坐标点
-        public int CurrentPointIndex;   // 当前目标坐标点索引
-        public float Speed;             // 每秒移动的坐标数
+        public float MoveProgress;        // 沿路线的连续进度（单位：航点段，可小于 1 的小数）
+        public float Speed;             // 每秒推进的航点段数（连续推进，而非整数跳点）
         public float Scale;             // 缩放比例（float 以匹配 HuntMonsterCfg.scale）
         public bool IsAlive = true;
+
+        /// <summary>
+        /// 根据连续进度 MoveProgress，在相邻航点之间线性插值，
+        /// 返回怪物当前的精确坐标（浮点数，保证"一直在移动"）。
+        /// </summary>
+        public Vector2 GetInterpolatedPosition()
+        {
+            if (LinePoints == null || LinePoints.Count == 0) return Vector2.zero;
+            if (LinePoints.Count == 1)
+                return new Vector2(LinePoints[0].x, LinePoints[0].y);
+
+            float prog = Mathf.Clamp(MoveProgress, 0f, LinePoints.Count - 1);
+            int idx = Mathf.FloorToInt(prog);
+            if (idx >= LinePoints.Count - 1)
+            {
+                var last = LinePoints[LinePoints.Count - 1];
+                return new Vector2(last.x, last.y);
+            }
+
+            float t = prog - idx; // 0~1 之间的插值因子
+            var a = LinePoints[idx];
+            var b = LinePoints[idx + 1];
+            return new Vector2(
+                Mathf.Lerp(a.x, b.x, t),
+                Mathf.Lerp(a.y, b.y, t));
+        }
 
         // 运行时数据 - 不存配置直接算
         public int BaseKillRate;        // 基础击杀概率（万分比）
